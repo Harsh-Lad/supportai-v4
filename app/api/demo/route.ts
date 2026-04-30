@@ -30,7 +30,7 @@ export async function GET() {
       .lean()
 
     const result = orgs.map(o => ({
-      id: o._id.toString(),
+      id: (o._id as any).toString(),
       name: o.name,
     }))
 
