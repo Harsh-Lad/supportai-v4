@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Send, Bot, User, ThumbsUp, ThumbsDown, Mic, MicOff, Phone, PhoneOff } from 'lucide-react'
+import { Send, Bot, User, ThumbsUp, ThumbsDown } from 'lucide-react'
 
 interface Message {
   role: 'customer' | 'ai' | 'system'
@@ -24,22 +24,11 @@ export default function WidgetPage() {
   const [started, setStarted] = useState(false)
   const [escalated, setEscalated] = useState(false)
 
-  // Voice state
-  const [isVoiceMode, setIsVoiceMode] = useState(false)
-  const [isListening, setIsListening] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const [transcript, setTranscript] = useState('')
-
-  // Refs to avoid stale closures
   const conversationIdRef = useRef<string | null>(null)
-  const isVoiceModeRef = useRef(false)
   const loadingRef = useRef(false)
-  const recognitionRef = useRef<any>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Keep refs in sync
   useEffect(() => { conversationIdRef.current = conversationId }, [conversationId])
-  useEffect(() => { isVoiceModeRef.current = isVoiceMode }, [isVoiceMode])
   useEffect(() => { loadingRef.current = loading }, [loading])
 
   // Load widget config
@@ -56,12 +45,10 @@ export default function WidgetPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // ── Core message sender ────────────────────────────────────────
-  const sendMessage = useCallback(async (text: string, isVoice = false) => {
+  const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loadingRef.current) return
 
     setInput('')
-    setTranscript('')
     setMessages(prev => [...prev, { role: 'customer', content: text }])
     setLoading(true)
     loadingRef.current = true
@@ -75,7 +62,7 @@ export default function WidgetPage() {
           conversationId: conversationIdRef.current,
           orgId,
           customerName,
-          channel: isVoiceModeRef.current ? 'voice' : 'chat',
+          channel: 'chat',
         }),
       })
 
@@ -86,13 +73,12 @@ export default function WidgetPage() {
         conversationIdRef.current = data.conversationId
       }
 
-      const aiMsg: Message = {
+      setMessages(prev => [...prev, {
         role: 'ai',
         content: data.response || 'Sorry, something went wrong.',
         confidence: data.confidence,
         sources: data.sources,
-      }
-      setMessages(prev => [...prev, aiMsg])
+      }])
 
       if (data.escalated) {
         setEscalated(true)
@@ -100,11 +86,6 @@ export default function WidgetPage() {
           role: 'system',
           content: 'This conversation has been escalated to a human agent. Someone from our team will follow up with you shortly.',
         }])
-      }
-
-      // Speak in voice mode
-      if (isVoiceModeRef.current && data.response) {
-        speakText(data.response)
       }
     } catch {
       setMessages(prev => [...prev, {
@@ -117,122 +98,13 @@ export default function WidgetPage() {
     loadingRef.current = false
   }, [orgId, customerName])
 
-  // ── Speech synthesis ───────────────────────────────────────────
-  const speakText = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) return
-
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 1.0
-    utterance.pitch = 1.0
-    utterance.lang = 'en-US'
-
-    utterance.onstart = () => setIsSpeaking(true)
-    utterance.onend = () => {
-      setIsSpeaking(false)
-      // Resume listening after speaking
-      if (isVoiceModeRef.current) {
-        setTimeout(() => startListening(), 500)
-      }
-    }
-    utterance.onerror = () => setIsSpeaking(false)
-
-    window.speechSynthesis.speak(utterance)
-  }, [])
-
-  // ── Speech recognition setup ───────────────────────────────────
-  const initRecognition = useCallback(() => {
-    if (typeof window === 'undefined') return null
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return null
-
-    const recognition = new SR()
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-    recognition.maxAlternatives = 1
-
-    recognition.onresult = (event: any) => {
-      let finalText = ''
-      let interimText = ''
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i]
-        if (result.isFinal) {
-          finalText += result[0].transcript
-        } else {
-          interimText += result[0].transcript
-        }
-      }
-
-      if (finalText) {
-        setTranscript('')
-        setIsListening(false)
-        sendMessage(finalText, true)
-      } else if (interimText) {
-        setTranscript(interimText)
-      }
-    }
-
-    recognition.onerror = (event: any) => {
-      console.log('Speech recognition error:', event.error)
-      setIsListening(false)
-      // Auto-restart on 'no-speech' if still in voice mode
-      if (event.error === 'no-speech' && isVoiceModeRef.current) {
-        setTimeout(() => startListening(), 1000)
-      }
-    }
-
-    recognition.onend = () => {
-      setIsListening(false)
-    }
-
-    return recognition
-  }, [sendMessage])
-
-  const startListening = useCallback(() => {
-    // Stop any existing recognition first
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort() } catch {}
-    }
-
-    const recognition = initRecognition()
-    if (!recognition) return
-
-    recognitionRef.current = recognition
-
-    try {
-      recognition.start()
-      setIsListening(true)
-      setTranscript('')
-    } catch (e) {
-      console.log('Failed to start recognition:', e)
-    }
-  }, [initRecognition])
-
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort()
-      } catch {}
-      recognitionRef.current = null
-    }
-    setIsListening(false)
-    setTranscript('')
-  }, [])
-
-  // ── Conversation start ─────────────────────────────────────────
   const startConversation = () => {
     if (!customerName.trim()) return
     setStarted(true)
     const welcome = config?.welcomeMessage || 'Hi! How can I help you today?'
     setMessages([{ role: 'ai', content: welcome }])
-    if (isVoiceMode) {
-      setTimeout(() => speakText(welcome), 300)
-    }
   }
 
-  // ── Feedback ───────────────────────────────────────────────────
   const sendFeedback = async (messageIndex: number, helpful: boolean) => {
     if (!conversationId) return
     try {
@@ -243,14 +115,6 @@ export default function WidgetPage() {
       })
     } catch {}
   }
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopListening()
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel()
-    }
-  }, [stopListening])
 
   const brandColor = config?.widgetColor || '#6366f1'
 
@@ -286,21 +150,6 @@ export default function WidgetPage() {
               />
             </div>
 
-            {config?.enableVoice && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="voiceMode"
-                  checked={isVoiceMode}
-                  onChange={e => setIsVoiceMode(e.target.checked)}
-                  className="rounded"
-                />
-                <label htmlFor="voiceMode" className="text-sm text-gray-600 flex items-center gap-1">
-                  <Phone className="h-3 w-3" /> Enable voice call mode
-                </label>
-              </div>
-            )}
-
             <button
               onClick={startConversation}
               disabled={!customerName.trim()}
@@ -323,19 +172,6 @@ export default function WidgetPage() {
         <div className="flex items-center gap-2">
           <Bot className="h-5 w-5" />
           <span className="font-semibold text-sm">{config?.orgName || 'Support'}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {isVoiceMode && (
-            <div className="flex items-center gap-1 text-xs bg-white/20 px-2 py-1 rounded-full">
-              {isListening ? (
-                <><Mic className="h-3 w-3 animate-pulse text-red-300" /> Listening...</>
-              ) : isSpeaking ? (
-                <><span className="animate-pulse">🔊</span> Speaking...</>
-              ) : (
-                <><MicOff className="h-3 w-3" /> Voice Mode</>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -402,76 +238,32 @@ export default function WidgetPage() {
           </div>
         )}
 
-        {transcript && (
-          <div className="text-center">
-            <span className="text-xs text-gray-400 italic">🎤 {transcript}</span>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input area */}
       {!escalated ? (
         <div className="p-3 border-t">
-          {isVoiceMode ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={isListening ? stopListening : startListening}
-                  disabled={loading || isSpeaking}
-                  className={`h-14 w-14 rounded-full flex items-center justify-center text-white transition-all disabled:opacity-50 ${
-                    isListening ? 'animate-pulse ring-4 ring-red-200' : ''
-                  }`}
-                  style={{ backgroundColor: isListening ? '#ef4444' : brandColor }}
-                >
-                  {isListening ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-                </button>
-                <button
-                  onClick={() => {
-                    setIsVoiceMode(false)
-                    stopListening()
-                    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
-                  }}
-                  className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-300"
-                >
-                  <PhoneOff className="h-4 w-4" />
-                </button>
-              </div>
-              <p className="text-xs text-gray-400">
-                {isListening ? 'Speak now...' : isSpeaking ? 'AI is responding...' : 'Tap mic to speak'}
-              </p>
-            </div>
-          ) : (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
-                placeholder="Type your message..."
-                disabled={loading}
-                className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:outline-none disabled:opacity-50"
-                style={{ '--tw-ring-color': brandColor } as React.CSSProperties}
-              />
-              {config?.enableVoice && (
-                <button
-                  onClick={() => setIsVoiceMode(true)}
-                  className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
-                  title="Switch to voice mode"
-                >
-                  <Mic className="h-4 w-4 text-gray-600" />
-                </button>
-              )}
-              <button
-                onClick={() => sendMessage(input)}
-                disabled={loading || !input.trim()}
-                className="p-2 text-white rounded-lg disabled:opacity-50"
-                style={{ backgroundColor: brandColor }}
-              >
-                <Send className="h-4 w-4" />
-              </button>
-            </div>
-          )}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && sendMessage(input)}
+              placeholder="Type your message..."
+              disabled={loading}
+              className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:outline-none disabled:opacity-50"
+              style={{ '--tw-ring-color': brandColor } as React.CSSProperties}
+            />
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={loading || !input.trim()}
+              className="p-2 text-white rounded-lg disabled:opacity-50"
+              style={{ backgroundColor: brandColor }}
+            >
+              <Send className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       ) : (
         <div className="p-3 border-t text-center">

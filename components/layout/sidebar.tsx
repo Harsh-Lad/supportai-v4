@@ -5,7 +5,8 @@ import { usePathname } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
 import {
   Bot, LayoutDashboard, FileText, MessageSquare, Ticket,
-  Settings, LogOut, BarChart3, Shield, Mail, PlayCircle, Users2, CreditCard
+  Settings, LogOut, Shield, PlayCircle, Users2,
+  ExternalLink, Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -16,17 +17,17 @@ const navItems = [
   { href: '/dashboard/documents', icon: FileText, label: 'Documents' },
   { href: '/dashboard/tickets', icon: Ticket, label: 'Tickets' },
   { href: '/dashboard/conversations', icon: MessageSquare, label: 'Conversations' },
-  { href: '/dashboard/analytics', icon: BarChart3, label: 'Analytics' },
-  // { href: '/dashboard/playground', icon: PlayCircle, label: 'Playground' },
+  { href: '/dashboard/playground', icon: PlayCircle, label: 'Sandbox' },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
   { href: '/dashboard/team', icon: Users2, label: 'Team' },
-  { href: '/dashboard/billing', icon: CreditCard, label: 'Billing' },
+  // { href: '/dashboard/billing', icon: CreditCard, label: 'Billing' },
 ]
 
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname()
   const { data: session } = useSession()
   const isSuperAdmin = (session?.user as any)?.role === 'super_admin'
+  const orgId = (session?.user as any)?.organizationId
 
   const handleNavClick = () => {
     if (onClose) {
@@ -60,6 +61,23 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             {item.label}
           </Link>
         ))}
+
+        {orgId && (
+          <>
+            <Separator className="my-3" />
+            <a
+              href={`/landing-demo?orgId=${orgId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={handleNavClick}
+              className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            >
+              <Globe className="h-4 w-4" />
+              <span className="flex-1">View Demo</span>
+              <ExternalLink className="h-3 w-3 opacity-60" />
+            </a>
+          </>
+        )}
 
         {isSuperAdmin && (
           <>

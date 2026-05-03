@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { Trash2, Send } from 'lucide-react'
+import { Trash2, Send, FlaskConical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -15,7 +15,6 @@ interface Message {
   confidence?: number
   sources?: string[]
   tokensUsed?: number
-  retryCount?: number
 }
 
 interface OrgSettings {
@@ -68,7 +67,8 @@ export default function PlaygroundPage() {
 
     const userMessage = input
     setInput('')
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }])
+    const nextMessages: Message[] = [...messages, { role: 'user', content: userMessage }]
+    setMessages(nextMessages)
     setSending(true)
     setError(null)
 
@@ -80,6 +80,8 @@ export default function PlaygroundPage() {
           message: userMessage,
           orgId,
           channel: 'playground',
+          playground: true,
+          history: messages.map(m => ({ role: m.role, content: m.content })),
         }),
       })
 
@@ -95,7 +97,6 @@ export default function PlaygroundPage() {
         confidence: data.confidence,
         sources: data.sources,
         tokensUsed: data.tokensUsed,
-        retryCount: data.retryCount,
       }])
     } catch (err: any) {
       console.error('Chat error:', err)
@@ -128,11 +129,21 @@ export default function PlaygroundPage() {
 
   return (
     <div className="p-8 h-screen flex flex-col">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold tracking-tight">Test Playground</h1>
-        <p className="text-muted-foreground mt-1">
-          Test your AI support assistant and debug responses
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Sandbox</h1>
+          <p className="text-muted-foreground mt-1">
+            Try real conversations against your knowledge base before integration. Nothing here is saved.
+          </p>
+        </div>
+        <Badge variant="secondary" className="gap-1.5 mt-1">
+          <FlaskConical className="h-3.5 w-3.5" />
+          Sandbox mode
+        </Badge>
+      </div>
+
+      <div className="mb-4 px-4 py-2.5 rounded-md border border-amber-200 bg-amber-50 text-amber-800 text-sm dark:bg-amber-950/30 dark:border-amber-900/40 dark:text-amber-200">
+        Messages here don't appear in Conversations, don't create tickets, and don't count toward your usage. Use the Documents tab to update what the AI can answer from.
       </div>
 
       <div className="flex-1 gap-6 flex min-h-0">
@@ -315,17 +326,6 @@ export default function PlaygroundPage() {
                       </p>
                       <p className="text-sm font-mono bg-slate-50 p-2 rounded border">
                         {selectedMsg.tokensUsed}
-                      </p>
-                    </div>
-                  )}
-
-                  {selectedMsg.retryCount !== undefined && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">
-                        Retry Count
-                      </p>
-                      <p className="text-sm font-mono bg-slate-50 p-2 rounded border">
-                        {selectedMsg.retryCount}
                       </p>
                     </div>
                   )}

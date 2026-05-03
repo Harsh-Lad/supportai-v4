@@ -17,7 +17,6 @@ export interface IOrganization {
     welcomeMessage: string
     widgetColor: string
     widgetPosition: 'bottom-right' | 'bottom-left'
-    enableVoice: boolean
     enableEmail: boolean
   }
   createdAt: Date

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { connectDB } from '@/lib/db'
 import Document from '@/models/Document'
 import Conversation from '@/models/Conversation'
@@ -19,7 +21,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
     }
 
-    const { message, conversationId, orgId, customerName, channel } = await req.json()
+    const { message, conversationId, orgId, customerName, channel, playground, history } = await req.json()
 
     if (!message || !orgId) {
       return NextResponse.json({ error: 'Message and orgId are required' }, { status: 400 })
@@ -31,6 +33,19 @@ export async function POST(req: NextRequest) {
     const org = await Organization.findById(orgId)
     if (!org) {
       return NextResponse.json({ error: 'Organization not found' }, { status: 404 })
+    }
+
+    // ── Sandbox/playground path ────────────────────────────────
+    // Runs the full RAG + AI pipeline but persists nothing and does not
+    // increment usage counters. Requires an authenticated session so the
+    // flag can't be used by anonymous callers to bypass billing.
+    if (playground) {
+      const session = await getServerSession(authOptions)
+      const sessionOrgId = (session?.user as any)?.organizationId
+      if (!session || sessionOrgId !== orgId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      return await handlePlaygroundChat(org, message, Array.isArray(history) ? history : [])
     }
 
     // Get or create conversation
@@ -92,7 +107,7 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // ── RAG Retrieval (Google Embeddings) ────────────────────
+    // ── RAG Retrieval (OpenAI Embeddings) ────────────────────
     const allChunks = docs.flatMap(doc =>
       (doc.chunks || []).map((chunk: any) => ({
         id: chunk._id?.toString() || chunk.id,
@@ -103,7 +118,7 @@ export async function POST(req: NextRequest) {
       }))
     )
 
-    // Semantic search using Google embeddings
+    // Semantic search using OpenAI embeddings
     const scored = await searchChunks(message, allChunks, 5)
 
     const topScore = scored[0]?.score || 0
@@ -127,7 +142,8 @@ export async function POST(req: NextRequest) {
     let tokensUsed: number | undefined
 
     const aiConfig = org.aiProvider
-    const platformGeminiKey = process.env.GEMINI_API_KEY
+    const platformOpenAIKey = process.env.OPENAI_API_KEY
+    const platformDefaultModel = process.env.OPENAI_DEFAULT_MODEL || 'gpt-4o-mini'
 
     if (aiConfig?.enabled && aiConfig?.apiKey && aiConfig?.provider !== 'none') {
       // Use configured AI provider (BYOK)
@@ -150,11 +166,11 @@ export async function POST(req: NextRequest) {
         tokensUsed = aiResult.tokensUsed
       } catch (aiError: any) {
         console.error('AI provider error:', aiError.message)
-        // Fallback to platform Gemini key or template
-        if (platformGeminiKey) {
+        // Fallback to platform OpenAI key or template
+        if (platformOpenAIKey) {
           try {
             const aiResult = await generateAIResponse(
-              { provider: 'gemini', apiKey: platformGeminiKey, model: 'gemini-2.0-flash' },
+              { provider: 'openai', apiKey: platformOpenAIKey, model: platformDefaultModel },
               org.name, message, contextTexts, messageHistory, org.customPrompt
             )
             responseText = aiResult.text
@@ -166,11 +182,11 @@ export async function POST(req: NextRequest) {
           responseText = generateFallbackResponse(message, contextTexts)
         }
       }
-    } else if (platformGeminiKey) {
-      // No tenant BYOK configured — use platform default Gemini key
+    } else if (platformOpenAIKey) {
+      // No tenant BYOK configured — use platform default OpenAI key
       try {
         const aiResult = await generateAIResponse(
-          { provider: 'gemini', apiKey: platformGeminiKey, model: 'gemini-2.0-flash' },
+          { provider: 'openai', apiKey: platformOpenAIKey, model: platformDefaultModel },
           org.name,
           message,
           contextTexts,
@@ -180,7 +196,7 @@ export async function POST(req: NextRequest) {
         responseText = aiResult.text
         tokensUsed = aiResult.tokensUsed
       } catch (aiError: any) {
-        console.error('Platform Gemini error:', aiError.message)
+        console.error('Platform OpenAI error:', aiError.message)
         responseText = generateFallbackResponse(message, contextTexts)
       }
     } else {
@@ -241,4 +257,101 @@ export async function POST(req: NextRequest) {
     console.error('Chat error:', error)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
+}
+
+async function handlePlaygroundChat(
+  org: any,
+  message: string,
+  history: { role: string; content: string }[]
+) {
+  const docs = await Document.find({ organizationId: org._id, status: 'ready' })
+
+  if (docs.length === 0) {
+    return NextResponse.json({
+      response: "Your knowledge base is empty — upload documents on the Documents page to test real responses.",
+      confidence: 0,
+      sources: [],
+      tokensUsed: 0,
+      escalated: false,
+      sandbox: true,
+    })
+  }
+
+  const allChunks = docs.flatMap(doc =>
+    (doc.chunks || []).map((chunk: any) => ({
+      id: chunk._id?.toString() || chunk.id,
+      text: chunk.text,
+      documentId: doc._id.toString(),
+      documentName: doc.name,
+      embedding: chunk.embedding || [],
+    }))
+  )
+
+  const scored = await searchChunks(message, allChunks, 5)
+  const topScore = scored[0]?.score || 0
+  const relevantChunks = scored.filter(s => s.score > 0.3)
+  const contextTexts = relevantChunks.map(c => c.text)
+  const confidence = Math.min(topScore, 1)
+  const sourceNames = [...new Set(relevantChunks.map(c => c.documentName))]
+
+  const messageHistory = history.slice(-10).map(m => ({
+    role: m.role === 'user' ? 'user' : 'assistant',
+    content: m.content,
+  }))
+
+  let responseText: string
+  let tokensUsed: number | undefined
+
+  const aiConfig = org.aiProvider
+  const platformOpenAIKey = process.env.OPENAI_API_KEY
+  const platformDefaultModel = process.env.OPENAI_DEFAULT_MODEL || 'gpt-4o-mini'
+
+  const tryProvider = async (cfg: AIProviderConfig) => generateAIResponse(
+    cfg, org.name, message, contextTexts, messageHistory, org.customPrompt
+  )
+
+  if (aiConfig?.enabled && aiConfig?.apiKey && aiConfig?.provider !== 'none') {
+    try {
+      const result = await tryProvider({
+        provider: aiConfig.provider,
+        apiKey: decrypt(aiConfig.apiKey),
+        model: aiConfig.model || undefined,
+      })
+      responseText = result.text
+      tokensUsed = result.tokensUsed
+    } catch (err: any) {
+      console.error('Playground BYOK error:', err.message)
+      if (platformOpenAIKey) {
+        try {
+          const result = await tryProvider({ provider: 'openai', apiKey: platformOpenAIKey, model: platformDefaultModel })
+          responseText = result.text
+          tokensUsed = result.tokensUsed
+        } catch {
+          responseText = generateFallbackResponse(message, contextTexts)
+        }
+      } else {
+        responseText = generateFallbackResponse(message, contextTexts)
+      }
+    }
+  } else if (platformOpenAIKey) {
+    try {
+      const result = await tryProvider({ provider: 'openai', apiKey: platformOpenAIKey, model: platformDefaultModel })
+      responseText = result.text
+      tokensUsed = result.tokensUsed
+    } catch (err: any) {
+      console.error('Playground platform OpenAI error:', err.message)
+      responseText = generateFallbackResponse(message, contextTexts)
+    }
+  } else {
+    responseText = generateFallbackResponse(message, contextTexts)
+  }
+
+  return NextResponse.json({
+    response: responseText,
+    confidence,
+    sources: sourceNames,
+    tokensUsed,
+    escalated: false,
+    sandbox: true,
+  })
 }

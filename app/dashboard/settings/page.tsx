@@ -65,7 +65,6 @@ export default function SettingsPage() {
     welcomeMessage: 'Hi! How can I help you today?',
     widgetColor: '#6366f1',
     widgetPosition: 'bottom-right',
-    enableVoice: true,
     enableEmail: false,
   })
 
@@ -317,16 +316,6 @@ export default function SettingsPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label>Voice Support</Label>
-                  <p className="text-xs text-muted-foreground">Enable voice call mode in widget</p>
-                </div>
-                <Switch
-                  checked={settings.enableVoice}
-                  onCheckedChange={v => setSettings({ ...settings, enableVoice: v })}
-                />
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

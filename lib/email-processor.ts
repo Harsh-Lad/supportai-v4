@@ -86,7 +86,7 @@ export async function processInboundEmail(
     }
   }
 
-  // RAG retrieval using Google Embeddings
+  // RAG retrieval using OpenAI Embeddings
   const allChunks = docs.flatMap(doc =>
     (doc.chunks || []).map((chunk: any) => ({
       id: chunk._id?.toString() || chunk.id,
@@ -109,7 +109,8 @@ export async function processInboundEmail(
   // Generate AI response
   let responseText: string
   const aiConfig = org.aiProvider
-  const platformGeminiKey = process.env.GEMINI_API_KEY
+  const platformOpenAIKey = process.env.OPENAI_API_KEY
+  const platformDefaultModel = process.env.OPENAI_DEFAULT_MODEL || 'gpt-4o-mini'
 
   if (aiConfig?.enabled && aiConfig?.apiKey && aiConfig?.provider !== 'none') {
     try {
@@ -123,10 +124,10 @@ export async function processInboundEmail(
     } catch {
       responseText = generateFallbackResponse(email.body, contextTexts)
     }
-  } else if (platformGeminiKey) {
+  } else if (platformOpenAIKey) {
     try {
       const aiResult = await generateAIResponse(
-        { provider: 'gemini', apiKey: platformGeminiKey, model: 'gemini-2.0-flash' },
+        { provider: 'openai', apiKey: platformOpenAIKey, model: platformDefaultModel },
         org.name, email.body, contextTexts
       )
       responseText = aiResult.text

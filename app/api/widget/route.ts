@@ -24,7 +24,6 @@ export async function GET(req: NextRequest) {
       welcomeMessage: org.settings.welcomeMessage,
       widgetColor: org.settings.widgetColor,
       widgetPosition: org.settings.widgetPosition,
-      enableVoice: org.settings.enableVoice,
     })
   } catch (error) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

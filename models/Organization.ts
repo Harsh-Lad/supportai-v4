@@ -13,7 +13,6 @@ const OrganizationSchema = new Schema({
     welcomeMessage: { type: String, default: 'Hi! How can I help you today?' },
     widgetColor: { type: String, default: '#6366f1' },
     widgetPosition: { type: String, enum: ['bottom-right', 'bottom-left'], default: 'bottom-right' },
-    enableVoice: { type: Boolean, default: true },
     enableEmail: { type: Boolean, default: false },
   },
   // BYOK AI Provider configuration

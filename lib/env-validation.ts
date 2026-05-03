@@ -22,7 +22,7 @@ export function validateEnv(): ValidationResult {
     MONGODB_URI: 'MongoDB connection URI',
     NEXTAUTH_SECRET: 'NextAuth secret key for session signing',
     NEXTAUTH_URL: 'NextAuth callback URL',
-    GEMINI_API_KEY: 'Google Gemini API key for embeddings and default AI',
+    OPENAI_API_KEY: 'OpenAI API key for embeddings and default AI',
   };
 
   // Optional but recommended environment variables

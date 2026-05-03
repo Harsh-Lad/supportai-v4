@@ -1,11 +1,11 @@
 /**
- * RAG Engine — Google Embeddings (gemini-embedding-001)
- * Uses Gemini embedding API for document vectorization and semantic search.
- * Requires GEMINI_API_KEY env var.
+ * RAG Engine — OpenAI Embeddings (text-embedding-3-small)
+ * Uses OpenAI embedding API for document vectorization and semantic search.
+ * Requires OPENAI_API_KEY env var.
  */
 
-const EMBEDDING_MODEL = 'gemini-embedding-001'
-const EMBEDDING_API = 'https://generativelanguage.googleapis.com/v1beta'
+const EMBEDDING_MODEL = 'text-embedding-3-small'
+const EMBEDDING_API = 'https://api.openai.com/v1/embeddings'
 
 // ── Text Chunking ──────────────────────────────────────────────────
 export function chunkText(text: string, chunkSize = 500, overlap = 100): string[] {
@@ -32,81 +32,66 @@ export function chunkText(text: string, chunkSize = 500, overlap = 100): string[
   return chunks.filter(c => c.length > 20)
 }
 
-// ── Google Embeddings ─────────────────────────────────────────────
-function getGeminiKey(): string {
-  const key = process.env.GEMINI_API_KEY
+// ── OpenAI Embeddings ─────────────────────────────────────────────
+function getOpenAIKey(): string {
+  const key = process.env.OPENAI_API_KEY
   if (!key) {
-    throw new Error('GEMINI_API_KEY is not set. Required for embeddings.')
+    throw new Error('OPENAI_API_KEY is not set. Required for embeddings.')
   }
   return key
 }
 
+async function callOpenAIEmbeddings(input: string | string[]): Promise<number[][]> {
+  const apiKey = getOpenAIKey()
+
+  const res = await fetch(EMBEDDING_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL,
+      input,
+    }),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Embedding API error (${res.status}): ${err}`)
+  }
+
+  const data = await res.json()
+  return (data.data || []).map((d: { embedding: number[] }) => d.embedding)
+}
+
 /**
- * Generate embedding for a single text using Google gemini-embedding-001.
+ * Generate embedding for a single text using OpenAI text-embedding-3-small.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const apiKey = getGeminiKey()
-  const url = `${EMBEDDING_API}/models/${EMBEDDING_MODEL}:embedContent`
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      content: { parts: [{ text }] },
-    }),
-  })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Embedding API error (${res.status}): ${err}`)
-  }
-
-  const data = await res.json()
-  return data.embedding?.values || []
+  const [embedding] = await callOpenAIEmbeddings(text)
+  return embedding || []
 }
 
 /**
- * Generate embedding for a query (uses RETRIEVAL_QUERY task type for better results).
+ * Generate embedding for a query (same model as documents — cosine compares apples to apples).
  */
 export async function generateQueryEmbedding(text: string): Promise<number[]> {
-  const apiKey = getGeminiKey()
-  const url = `${EMBEDDING_API}/models/${EMBEDDING_MODEL}:embedContent`
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      content: { parts: [{ text }] },
-    }),
-  })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Embedding API error (${res.status}): ${err}`)
-  }
-
-  const data = await res.json()
-  return data.embedding?.values || []
+  return generateEmbedding(text)
 }
 
 /**
- * Batch embed multiple texts (calls sequentially to respect rate limits).
- * Returns array of embedding vectors in the same order.
+ * Batch embed multiple texts. OpenAI supports array input natively, so we
+ * send them in one request per batch instead of N parallel calls.
  */
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   const embeddings: number[][] = []
 
-  // Process in batches of 5 to avoid rate limits
-  const BATCH_SIZE = 5
+  // OpenAI accepts up to 2048 inputs per request; keep batches modest to bound payload size.
+  const BATCH_SIZE = 64
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
     const batch = texts.slice(i, i + BATCH_SIZE)
-    const results = await Promise.all(batch.map(t => generateEmbedding(t)))
+    const results = await callOpenAIEmbeddings(batch)
     embeddings.push(...results)
   }
 
